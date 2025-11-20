@@ -46,6 +46,8 @@ print(Fore.RED+"""
 
 
 """)
+print(Fore.RESET)
+#!/usr/bin/env python3
 #!/usr/bin/env python3
 import socket
 import threading
