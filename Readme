@@ -7,12 +7,16 @@ python main.py -l 0.0.0.0 -p 9999 -t 192.168.1.70 -r 22
 ssh tünelleme ve yönledirmede
 python main.py -l 0.0.0.0 -p 4444 -t 192.168.1.50 -r 22
 src klasörünede ss.log yaptıklarınızın logunu tutar bu c2 teamserverlarda çalışmak tadır ssh scp ftp vb. geçerlidir
+udp ile'de aynısını yapa bilirsiniz --udp ile yada --tpc
+-w veya --wizard ilede wizardı açabilirsiniz
 ama bunu kullanırken lütfen yazdığım firewall ile başka bir firewall kullanın açık testi dahayapmadım 
+
 indirmek için 
 git clone https://github.com/hvns1414/The-Skull.git
 cd The-Skull
 pip install -r requiments.txt
 # TCP Forwarder (Cross-Platform)
+#UDP Forwarder  (Cross-Platform)
 
 This is a lightweight TCP forwarder written in Python.  
 It listens on a local port and forwards all incoming traffic to a target host/port.
