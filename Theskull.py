@@ -46,129 +46,226 @@ print(Fore.RED+"""
 
 
 """)
-init(autoreset=True)
+#!/usr/bin/env python3
+import socket
+import threading
+import time
+import sys
+import optparse
+import os
 
-# ------------------------
-# Logging System
-# ------------------------
-LOG_FILE = os.path.join(os.path.dirname(__file__), "ss.log")
+LOG_FILE = "ss.log"
+
+# ---------------------------
+# COLOR SYSTEM (Cross-Platform)
+# ---------------------------
+class Colors:
+    HEADER = "\033[95m"
+    OKBLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    OKGREEN = "\033[92m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
 
 def log(msg):
     with open(LOG_FILE, "a") as f:
-        f.write(f"[{time.ctime()}] {msg}\n")
+        f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
 
-# ------------------------
-# TCP Forwarding Function
-# ------------------------
-def relay(src_sock, dst_sock):
+# ---------------------------
+# TCP FORWARDER
+# ---------------------------
+def tcp_relay(src, dst):
     try:
         while True:
-            data = src_sock.recv(4096)
+            data = src.recv(4096)
             if not data:
                 break
-            dst_sock.sendall(data)
-    except Exception:
+            dst.sendall(data)
+    except:
         pass
-    finally:
-        try:
-            dst_sock.shutdown(socket.SHUT_WR)
-        except:
-            pass
 
-
-def handle_client(client_sock, client_addr, target_host, target_port):
-    print(Fore.GREEN + f"[+] New client: {client_addr} -> forwarding to {target_host}:{target_port}")
-    log(f"New client {client_addr} -> {target_host}:{target_port}")
-
+def tcp_handler(client, target):
     try:
-        remote = socket.create_connection((target_host, target_port), timeout=10)
+        remote = socket.create_connection(target)
     except Exception as e:
-        print(Fore.RED + f"[-] Failed to connect to target: {e}")
-        log(f"Failed to connect: {e}")
-        client_sock.close()
+        print(f"{Colors.FAIL}[-] TCP: Target unreachable: {e}{Colors.ENDC}")
+        log(f"TCP Target unreachable: {e}")
+        client.close()
         return
 
-    t1 = threading.Thread(target=relay, args=(client_sock, remote), daemon=True)
-    t2 = threading.Thread(target=relay, args=(remote, client_sock), daemon=True)
+    t1 = threading.Thread(target=tcp_relay, args=(client, remote), daemon=True)
+    t2 = threading.Thread(target=tcp_relay, args=(remote, client), daemon=True)
     t1.start()
     t2.start()
     t1.join()
     t2.join()
 
-    try: client_sock.close()
-    except: pass
-    try: remote.close()
-    except: pass
+    client.close()
+    remote.close()
 
-    print(Fore.YELLOW + f"[-] Connection closed: {client_addr}")
-    log(f"Connection closed: {client_addr}")
+def tcp_server(lhost, lport, rhost, rport):
+    print(f"{Colors.OKGREEN}[+] Starting TCP forwarder{Colors.ENDC}")
+    print(f"    {lhost}:{lport} -> {rhost}:{rport}\n")
 
-
-# ------------------------
-# Server Start Function
-# ------------------------
-def serve(listen_host, listen_port, target_host, target_port):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-    try:
-        srv.bind((listen_host, listen_port))
-    except Exception as e:
-        print(Fore.RED + f"Bind error: {e}")
-        sys.exit(1)
-
+    srv.bind((lhost, lport))
     srv.listen(200)
-    print(Fore.CYAN + 
-          f"[+] Listening on {listen_host}:{listen_port} "
-          f"-> forwarding to {target_host}:{target_port}")
-    log(f"Listening on {listen_host}:{listen_port} -> {target_host}:{target_port}")
 
-    try:
-        while True:
-            client_sock, client_addr = srv.accept()
-            t = threading.Thread(target=handle_client,
-                                 args=(client_sock, client_addr, target_host, target_port),
-                                 daemon=True)
-            t.start()
-    except KeyboardInterrupt:
-        print(Fore.RED + "\nInterrupted by user, shutting down.")
-        log("Server interrupted by user.")
-    except Exception as e:
-        print(Fore.RED + f"Server error: {e}")
-        log(f"Server error: {e}")
-    finally:
-        srv.close()
+    while True:
+        client, addr = srv.accept()
+        print(f"{Colors.OKBLUE}[TCP] New connection: {addr}{Colors.ENDC}")
+        log(f"TCP New client {addr}")
+
+        threading.Thread(
+            target=tcp_handler,
+            args=(client, (rhost, rport)),
+            daemon=True
+        ).start()
+
+# ---------------------------
+# UDP FORWARDER
+# ---------------------------
+def udp_server(lhost, lport, rhost, rport):
+    print(f"{Colors.OKGREEN}[+] Starting UDP forwarder{Colors.ENDC}")
+    print(f"    {lhost}:{lport} -> {rhost}:{rport}\n")
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((lhost, lport))
+
+    while True:
+        try:
+            data, addr = sock.recvfrom(4096)
+            log(f"UDP packet from {addr}")
+            sock.sendto(data, (rhost, rport))
+        except Exception as e:
+            log(f"UDP error: {e}")
+
+# ---------------------------
+# INTERACTIVE WIZARD
+# ---------------------------
+
+def print_help_menu():
+    print(f"""
+{Colors.OKCYAN}============= HELP MENU ============={Colors.ENDC}
+Commands:
+  set:lhost <ip>       - Set local listening host
+  set:lport <port>     - Set local listening port
+  set:rhost <ip>       - Set remote target host
+  set:rport <port>     - Set remote target port
+  show                 - Show current settings
+  start                - Start forwarder using selected options
+  help                 - Show help menu
+  exit                 - Exit wizard
+""")
 
 
-# ------------------------
-# OPTPARSE CLI
-# ------------------------
+def run_wizard():
+    print(f"""{Colors.HEADER}
+******************************************
+*     TCP / UDP Forwarder Wizard         *
+******************************************
+{Colors.ENDC}""")
+
+    values = {
+        "lhost": "127.0.0.1",
+        "lport": 7777,
+        "rhost": "192.168.1.10",
+        "rport": 4444,
+        "mode": "tcp"
+    }
+
+    while True:
+        print(f"""
+[0] TCP
+[1] UDP
+[99] EXIT
+""")
+
+        choice = input("Select mode -> ")
+
+        if choice == "0":
+            values["mode"] = "tcp"
+            break
+        elif choice == "1":
+            values["mode"] = "udp"
+            break
+        elif choice == "99":
+            sys.exit(0)
+        else:
+            print(f"{Colors.WARNING}[!] Invalid option{Colors.ENDC}")
+
+    print_help_menu()
+
+    while True:
+        cmd = input(f"{Colors.OKGREEN}wizard> {Colors.ENDC}")
+
+        if cmd.startswith("set:"):
+            try:
+                _, key, val = cmd.split(" ")
+                key = key.replace("set:", "")
+                if key in values:
+                    if key.endswith("port"):
+                        values[key] = int(val)
+                    else:
+                        values[key] = val
+                    print(f"{Colors.OKBLUE}Updated {key} -> {val}{Colors.ENDC}")
+                else:
+                    print(f"{Colors.WARNING}Unknown field{Colors.ENDC}")
+            except:
+                print(f"{Colors.FAIL}Invalid set syntax{Colors.ENDC}")
+
+        elif cmd == "show":
+            print(values)
+
+        elif cmd == "help":
+            print_help_menu()
+
+        elif cmd == "start":
+            print(f"{Colors.OKGREEN}Starting forwarder...{Colors.ENDC}")
+            if values["mode"] == "tcp":
+                tcp_server(values["lhost"], values["lport"], values["rhost"], values["rport"])
+            else:
+                udp_server(values["lhost"], values["lport"], values["rhost"], values["rport"])
+
+        elif cmd == "exit":
+            sys.exit(0)
+
+        else:
+            print(f"{Colors.WARNING}Unknown command. Type 'help'.{Colors.ENDC}")
+
+# ---------------------------
+# MAIN ENTRY
+# ---------------------------
 def main():
-    parser = OptionParser()
+    parser = optparse.OptionParser()
+    parser.add_option("-g", "--tcp", action="store_true", dest="tcp", help="Use TCP forwarder")
+    parser.add_option("-k", "--udp", action="store_true", dest="udp", help="Use UDP forwarder")
+    parser.add_option("-w", "--wizard", action="store_true", dest="wizard", help="Start wizard mode")
 
-    parser.add_option("-l", "--listen-host", dest="listen_host", default="127.0.0.1",
-                      help="Host to listen on (default: 127.0.0.1)")
+    (opts, args) = parser.parse_args()
 
-    parser.add_option("-p", "--listen-port", dest="listen_port", type="int", default=7777,
-                      help="Port to listen on (default: 7777)")
+    if opts.wizard:
+        run_wizard()
 
-    parser.add_option("-t", "--target-host", dest="target_host", default="192.168.0.32",
-                      help="Target host to forward to")
+    mode = "tcp"
+    if opts.udp:
+        mode = "udp"
 
-    parser.add_option("-r", "--target-port", dest="target_port", type="int", default=446,
-                      help="Target port to forward to")
+    lhost = "127.0.0.1"
+    lport = 7777
+    rhost = "192.168.0.32"
+    rport = 446
 
-    (options, args) = parser.parse_args()
-
-    print(Fore.MAGENTA + "TCP Forwarder Started" + Style.RESET_ALL)
-
-    serve(
-        options.listen_host,
-        options.listen_port,
-        options.target_host,
-        options.target_port
-    )
+    if mode == "tcp":
+        tcp_server(lhost, lport, rhost, rport)
+    else:
+        udp_server(lhost, lport, rhost, rport)
 
 
 if __name__ == "__main__":
     main()
+
